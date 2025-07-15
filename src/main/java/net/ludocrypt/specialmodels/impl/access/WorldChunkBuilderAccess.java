@@ -8,18 +8,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
+import net.minecraft.client.Camera;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.culling.Frustum;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.ludocrypt.specialmodels.impl.chunk.SpecialBufferBuilderStorage;
 import net.ludocrypt.specialmodels.impl.chunk.SpecialBuiltChunkStorage;
 import net.ludocrypt.specialmodels.impl.chunk.SpecialChunkBuilder;
-import net.minecraft.client.render.Camera;
-import net.minecraft.client.render.Frustum;
-import net.minecraft.client.world.ClientWorld;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
 
 public interface WorldChunkBuilderAccess {
 
@@ -43,7 +43,7 @@ public interface WorldChunkBuilderAccess {
 
 	public AtomicLong getNextFullSpecialUpdateMilliseconds();
 
-	public void setWorldSpecial(ClientWorld world);
+	public void setWorldSpecial(ClientLevel world);
 
 	public void reloadSpecial();
 
@@ -54,12 +54,12 @@ public interface WorldChunkBuilderAccess {
 	public void addSpecialBuiltChunk(SpecialChunkBuilder.BuiltChunk builtChunk);
 
 	public void updateSpecialBuiltChunks(LinkedHashSet<SpecialChunkBuilder.ChunkInfo> builtChunks,
-			SpecialChunkBuilder.ChunkInfoListMap builtChunkMap, Vec3d cameraPos,
+			SpecialChunkBuilder.ChunkInfoListMap builtChunkMap, Vec3 cameraPos,
 			Queue<SpecialChunkBuilder.ChunkInfo> chunksToBuild, boolean chunkCullingEnabled);
 
 	@Nullable
 	public SpecialChunkBuilder.BuiltChunk getAdjacentSpecialChunk(BlockPos pos, SpecialChunkBuilder.BuiltChunk chunk,
-			Direction direction);
+																  Direction direction);
 
 	public boolean isSpecialChunkNearMaxViewDistance(BlockPos blockPos, SpecialChunkBuilder.BuiltChunk builtChunk);
 

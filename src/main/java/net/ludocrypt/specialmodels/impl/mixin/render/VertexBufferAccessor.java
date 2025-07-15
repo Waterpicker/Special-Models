@@ -1,14 +1,15 @@
 package net.ludocrypt.specialmodels.impl.mixin.render;
 
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.systems.RenderSystem.AutoStorageIndexBuffer;
+import com.mojang.blaze3d.vertex.VertexFormat.Mode;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Mutable;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
-import com.mojang.blaze3d.systems.RenderSystem.IndexBuffer;
 import com.mojang.blaze3d.vertex.VertexBuffer;
 import com.mojang.blaze3d.vertex.VertexBuffer.Usage;
 import com.mojang.blaze3d.vertex.VertexFormat;
-import com.mojang.blaze3d.vertex.VertexFormat.DrawMode;
 import com.mojang.blaze3d.vertex.VertexFormat.IndexType;
 
 @Mixin(VertexBuffer.class)
@@ -21,10 +22,10 @@ public interface VertexBufferAccessor {
 	void setIndexCount(int indexCount);
 
 	@Accessor
-	DrawMode getDrawMode();
+	Mode getMode();
 
 	@Accessor
-	void setDrawMode(DrawMode drawMode);
+	void setMode(Mode drawMode);
 
 	@Accessor
 	Usage getUsage();
@@ -46,16 +47,16 @@ public interface VertexBufferAccessor {
 	void setIndexBufferId(int indexBufferId);
 
 	@Accessor
-	VertexFormat getVertexFormat();
+	VertexFormat getFormat();
 
 	@Accessor
-	void setVertexFormat(VertexFormat vertexFormat);
+	void setFormat(VertexFormat vertexFormat);
 
 	@Accessor
-	IndexBuffer getIndexBuffer();
+	AutoStorageIndexBuffer getSequentialIndices();
 
 	@Accessor
-	void setIndexBuffer(IndexBuffer indexBuffer);
+	void setSequentialIndices(AutoStorageIndexBuffer sequentialIndices);
 
 	@Accessor
 	IndexType getIndexType();

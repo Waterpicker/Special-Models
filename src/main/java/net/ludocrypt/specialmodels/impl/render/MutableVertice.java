@@ -1,41 +1,41 @@
 package net.ludocrypt.specialmodels.impl.render;
 
-import net.minecraft.util.math.Vec2f;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.phys.Vec2;
+import net.minecraft.world.phys.Vec3;
 
 public class MutableVertice {
 
-	private Vec3d pos;
-	private Vec2f uv;
+	private Vec3 pos;
+	private Vec2 uv;
 
 	public MutableVertice() {
-		this.pos = Vec3d.ZERO;
-		this.uv = Vec2f.ZERO;
+		this.pos = Vec3.ZERO;
+		this.uv = Vec2.ZERO;
 	}
 
-	public MutableVertice(Vec3d pos, Vec2f uv) {
+	public MutableVertice(Vec3 pos, Vec2 uv) {
 		this.pos = pos;
 		this.uv = uv;
 	}
 
 	public MutableVertice(double x, double y, double z, double u, double v) {
-		this.pos = new Vec3d(x, y, z);
-		this.uv = new Vec2f((float) u, (float) v);
+		this.pos = new Vec3(x, y, z);
+		this.uv = new Vec2((float) u, (float) v);
 	}
 
-	public Vec3d getPos() {
+	public Vec3 getPos() {
 		return pos;
 	}
 
-	public Vec2f getUv() {
+	public Vec2 getUv() {
 		return uv;
 	}
 
-	public void setPos(Vec3d pos) {
+	public void setPos(Vec3 pos) {
 		this.pos = pos;
 	}
 
-	public void setUv(Vec2f uv) {
+	public void setUv(Vec2 uv) {
 		this.uv = uv;
 	}
 
@@ -44,7 +44,7 @@ public class MutableVertice {
 	}
 
 	public void shift(double u, double v) {
-		this.uv = new Vec2f(this.uv.x + (float) u, this.uv.y + (float) v);
+		this.uv = new Vec2(this.uv.x + (float) u, this.uv.y + (float) v);
 	}
 
 }

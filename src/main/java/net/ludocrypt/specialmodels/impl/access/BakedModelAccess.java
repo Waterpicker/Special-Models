@@ -2,13 +2,13 @@ package net.ludocrypt.specialmodels.impl.access;
 
 import java.util.List;
 
+import net.minecraft.client.resources.model.BakedModel;
+import net.minecraft.world.level.block.state.BlockState;
 import org.jetbrains.annotations.Nullable;
 
 import com.mojang.datafixers.util.Pair;
 
 import net.ludocrypt.specialmodels.api.SpecialModelRenderer;
-import net.minecraft.block.BlockState;
-import net.minecraft.client.render.model.BakedModel;
 
 public interface BakedModelAccess {
 

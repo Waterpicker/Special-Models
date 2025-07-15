@@ -1,5 +1,12 @@
 package net.ludocrypt.specialmodels.impl.mixin.render;
 
+import com.mojang.blaze3d.vertex.PoseStack;
+import net.minecraft.client.Camera;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.GameRenderer;
+import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.LightTexture;
+import net.minecraft.client.renderer.culling.Frustum;
 import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -11,34 +18,27 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import net.ludocrypt.specialmodels.impl.access.WorldChunkBuilderAccess;
 import net.ludocrypt.specialmodels.impl.access.WorldRendererAccess;
 import net.ludocrypt.specialmodels.impl.bridge.IrisBridge;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.render.Camera;
-import net.minecraft.client.render.Frustum;
-import net.minecraft.client.render.GameRenderer;
-import net.minecraft.client.render.LightmapTextureManager;
-import net.minecraft.client.render.WorldRenderer;
-import net.minecraft.client.util.math.MatrixStack;
 
-@Mixin(value = WorldRenderer.class, priority = 1050)
+@Mixin(value = LevelRenderer.class, priority = 1050)
 public abstract class WorldRendererAfterMixin implements WorldRendererAccess, WorldChunkBuilderAccess {
 
 	@Shadow
 	@Final
-	private MinecraftClient client;
+	private Minecraft minecraft;
 
 	@Shadow
-	private Frustum frustum;
+	private Frustum cullingFrustum;
 
-	@Inject(method = "Lnet/minecraft/client/render/WorldRenderer;render(Lnet/minecraft/client/util/math/MatrixStack;FJZLnet/minecraft/client/render/Camera;Lnet/minecraft/client/render/GameRenderer;Lnet/minecraft/client/render/LightmapTextureManager;Lorg/joml/Matrix4f;)V", at = @At(value = "RETURN", shift = At.Shift.BEFORE))
-	private void specialModels$render$clear(MatrixStack matrices, float tickDelta, long limitTime,
-			boolean renderBlockOutline, Camera camera, GameRenderer gameRenderer,
-			LightmapTextureManager lightmapTextureManager, Matrix4f positionMatrix, CallbackInfo ci) {
+	@Inject(method = "renderLevel", at = @At(value = "RETURN", shift = At.Shift.BEFORE))
+	private void specialModels$render$clear(PoseStack matrices, float tickDelta, long limitTime,
+											boolean renderBlockOutline, Camera camera, GameRenderer gameRenderer,
+											LightTexture lightmapTextureManager, Matrix4f positionMatrix, CallbackInfo ci) {
 
 		if (IrisBridge.IRIS_LOADED) {
 
 			if (IrisBridge.areShadersInUse()) {
 
-				this.setupSpecialTerrain(camera, this.frustum, false, this.client.player.isSpectator());
+				this.setupSpecialTerrain(camera, this.cullingFrustum, false, this.minecraft.player.isSpectator());
 				this.findSpecialChunksToRebuild(camera);
 				this.render(matrices, positionMatrix, tickDelta, camera, true);
 			}

@@ -5,6 +5,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
 
+import net.minecraft.client.resources.model.BakedModel;
+import net.minecraft.client.resources.model.MultiPartBakedModel;
+import net.minecraft.world.level.block.state.BlockState;
 import org.jetbrains.annotations.Nullable;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -17,16 +20,13 @@ import com.mojang.datafixers.util.Pair;
 import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
 import net.ludocrypt.specialmodels.api.SpecialModelRenderer;
 import net.ludocrypt.specialmodels.impl.access.BakedModelAccess;
-import net.minecraft.block.BlockState;
-import net.minecraft.client.render.model.BakedModel;
-import net.minecraft.client.render.model.MultipartBakedModel;
 
-@Mixin(MultipartBakedModel.class)
+@Mixin(MultiPartBakedModel.class)
 public class MultipartBakedModelMixin implements BakedModelAccess {
 
 	@Shadow
 	@Final
-	private List<org.apache.commons.lang3.tuple.Pair<Predicate<BlockState>, BakedModel>> components;
+	private List<org.apache.commons.lang3.tuple.Pair<Predicate<BlockState>, BakedModel>> selectors;
 	@Unique
 	private final Map<BlockState, List<Pair<SpecialModelRenderer, BakedModel>>> subModelCache = new Reference2ReferenceOpenHashMap<>();
 
@@ -43,9 +43,9 @@ public class MultipartBakedModelMixin implements BakedModelAccess {
 			models = this.subModelCache.get(state);
 
 			if (models == null) {
-				models = new ArrayList<>(this.components.size());
+				models = new ArrayList<>(this.selectors.size());
 
-				for (org.apache.commons.lang3.tuple.Pair<Predicate<BlockState>, BakedModel> pair : this.components) {
+				for (org.apache.commons.lang3.tuple.Pair<Predicate<BlockState>, BakedModel> pair : this.selectors) {
 
 					if ((pair.getLeft()).test(state)) {
 						models.addAll(((BakedModelAccess) pair.getRight()).getModels(state));

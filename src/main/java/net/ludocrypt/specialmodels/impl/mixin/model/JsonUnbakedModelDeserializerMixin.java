@@ -4,6 +4,9 @@ import java.lang.reflect.Type;
 import java.util.Map;
 import java.util.Map.Entry;
 
+import net.minecraft.client.renderer.block.model.BlockModel;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -16,17 +19,14 @@ import com.google.gson.JsonObject;
 
 import net.ludocrypt.specialmodels.api.SpecialModelRenderer;
 import net.ludocrypt.specialmodels.impl.access.UnbakedModelAccess;
-import net.minecraft.client.render.model.json.JsonUnbakedModel;
-import net.minecraft.registry.RegistryKey;
-import net.minecraft.util.Identifier;
 
-@Mixin(JsonUnbakedModel.Deserializer.class)
+@Mixin(BlockModel.Deserializer.class)
 public abstract class JsonUnbakedModelDeserializerMixin {
 
-	@Inject(method = "Lnet/minecraft/client/render/model/json/JsonUnbakedModel$Deserializer;deserialize(Lcom/google/gson/JsonElement;Ljava/lang/reflect/Type;Lcom/google/gson/JsonDeserializationContext;)Lnet/minecraft/client/render/model/json/JsonUnbakedModel;", at = @At("RETURN"), cancellable = true)
+	@Inject(method = "deserialize(Lcom/google/gson/JsonElement;Ljava/lang/reflect/Type;Lcom/google/gson/JsonDeserializationContext;)Lnet/minecraft/client/renderer/block/model/BlockModel;", at = @At("RETURN"), cancellable = true)
 	private void specialModels$deserialize(JsonElement jsonElement, Type type,
-			JsonDeserializationContext jsonDeserializationContext, CallbackInfoReturnable<JsonUnbakedModel> ci) {
-		Map<SpecialModelRenderer, Identifier> map = Maps.newHashMap();
+			JsonDeserializationContext jsonDeserializationContext, CallbackInfoReturnable<BlockModel> ci) {
+		Map<SpecialModelRenderer, ResourceLocation> map = Maps.newHashMap();
 		JsonObject jsonObject = jsonElement.getAsJsonObject();
 
 		if (jsonObject.has("specialmodels")) {
@@ -35,11 +35,10 @@ public abstract class JsonUnbakedModelDeserializerMixin {
 			for (Entry<String, JsonElement> entry : limlibExtra.entrySet()) {
 
 				if (SpecialModelRenderer.SPECIAL_MODEL_RENDERER
-					.contains(
-						RegistryKey.of(SpecialModelRenderer.SPECIAL_MODEL_RENDERER_KEY, new Identifier(entry.getKey())))) {
+					.containsKey(ResourceKey.create(SpecialModelRenderer.SPECIAL_MODEL_RENDERER_KEY, new ResourceLocation(entry.getKey())))) {
 					map
-						.put(SpecialModelRenderer.SPECIAL_MODEL_RENDERER.get(new Identifier(entry.getKey())),
-							new Identifier(entry.getValue().getAsString()));
+						.put(SpecialModelRenderer.SPECIAL_MODEL_RENDERER.get(new ResourceLocation(entry.getKey())),
+							new ResourceLocation(entry.getValue().getAsString()));
 				}
 
 			}

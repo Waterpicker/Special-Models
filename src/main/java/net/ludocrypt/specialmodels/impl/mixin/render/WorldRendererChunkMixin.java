@@ -11,6 +11,25 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
+import net.minecraft.Util;
+import net.minecraft.client.Camera;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.PrioritizeChunkUpdates;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.ItemBlockRenderTypes;
+import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.chunk.RenderRegionCache;
+import net.minecraft.client.renderer.culling.Frustum;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.SectionPos;
+import net.minecraft.server.level.ChunkMap;
+import net.minecraft.util.Mth;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.lighting.LevelLightEngine;
+import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -32,39 +51,20 @@ import net.ludocrypt.specialmodels.impl.chunk.SpecialChunkBuilder.BuiltChunk;
 import net.ludocrypt.specialmodels.impl.chunk.SpecialChunkBuilder.ChunkData;
 import net.ludocrypt.specialmodels.impl.chunk.SpecialChunkBuilder.ChunkInfo;
 import net.ludocrypt.specialmodels.impl.chunk.SpecialChunkBuilder.RenderableChunks;
-import net.minecraft.block.BlockState;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.option.ChunkUpdatesPrioritization;
-import net.minecraft.client.render.Camera;
-import net.minecraft.client.render.Frustum;
-import net.minecraft.client.render.RenderLayers;
-import net.minecraft.client.render.WorldRenderer;
-import net.minecraft.client.render.chunk.ChunkRenderRegionCache;
-import net.minecraft.client.world.ClientWorld;
-import net.minecraft.entity.Entity;
-import net.minecraft.server.world.ThreadedChunkManager;
-import net.minecraft.util.Util;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.ChunkSectionPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.MathHelper;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.BlockView;
-import net.minecraft.world.chunk.light.LightingProvider;
 
-@Mixin(WorldRenderer.class)
+@Mixin(LevelRenderer.class)
 public class WorldRendererChunkMixin implements WorldChunkBuilderAccess {
 
 	@Shadow
-	private ClientWorld world;
+	private ClientLevel level;
 	@Shadow
 	@Final
-	private MinecraftClient client;
+	private Minecraft minecraft;
 	@Shadow
-	private int viewDistance;
+	private int lastViewDistance;
 	@Shadow
 	@Final
-	private static double CEIL_CUBEROOT_3_TIMES_16;
+	private static double CEILED_SECTION_DIAGONAL;
 	@Unique
 	private SpecialChunkBuilder specialChunkBuilder;
 	@Unique
@@ -102,38 +102,38 @@ public class WorldRendererChunkMixin implements WorldChunkBuilderAccess {
 	@Unique
 	private double lastSpecialCameraYaw = Double.MIN_VALUE;
 
-	@Inject(method = "setWorld", at = @At("TAIL"))
-	private void specialModels$setWorld(ClientWorld world, CallbackInfo ci) {
-		this.setWorldSpecial(world);
+	@Inject(method = "setLevel", at = @At("TAIL"))
+	private void specialModels$setlevel(ClientLevel level, CallbackInfo ci) {
+		this.setWorldSpecial(level);
 	}
 
-	@Inject(method = "Lnet/minecraft/client/render/WorldRenderer;reload()V", at = @At("HEAD"))
+	@Inject(method = "allChanged", at = @At("HEAD"))
 	private void specialModels$reload(CallbackInfo ci) {
 		this.reloadSpecial();
 	}
 
-	@Inject(method = "updateBlock", at = @At("TAIL"))
-	private void specialModels$updateBlock(BlockView world, BlockPos pos, BlockState oldState, BlockState newState,
-			int flags, CallbackInfo ci) {
+	@Inject(method = "blockChanged", at = @At("TAIL"))
+	private void specialModels$updateBlock(BlockGetter level, BlockPos pos, BlockState oldState, BlockState newState,
+										   int flags, CallbackInfo ci) {
 		this.scheduleSpecialSectionRender(pos, (flags & 8) != 0);
 	}
 
-	@Inject(method = "scheduleBlockRender", at = @At("TAIL"))
+	@Inject(method = "setSectionDirty*", at = @At("TAIL"))
 	private void specialModels$scheduleBlockRender(int x, int y, int z, CallbackInfo ci) {
 		this.scheduleSpecialBlockRender(x, y, z);
 	}
 
-	@Inject(method = "scheduleBlockRerenderIfNeeded", at = @At("TAIL"))
+	@Inject(method = "setBlockDirty(Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/world/level/block/state/BlockState;)V", at = @At("TAIL"))
 	private void specialModels$scheduleBlockRerenderIfNeeded(BlockPos pos, BlockState old, BlockState updated,
 			CallbackInfo ci) {
 
-		if (this.client.getBakedModelManager().shouldRerender(old, updated)) {
+		if (this.minecraft.getModelManager().requiresRender(old, updated)) {
 			this.scheduleSpecialBlockRenders(pos.getX(), pos.getY(), pos.getZ(), pos.getX(), pos.getY(), pos.getZ());
 		}
 
 	}
 
-	@Inject(method = "scheduleTerrainUpdate", at = @At("TAIL"))
+	@Inject(method = "needsUpdate", at = @At("TAIL"))
 	private void specialModels$scheduleBlockRerenderIfNeeded(CallbackInfo ci) {
 		this.needsFullSpecialBuiltChunkUpdate = true;
 	}
@@ -146,8 +146,8 @@ public class WorldRendererChunkMixin implements WorldChunkBuilderAccess {
 
 				for (int k = pos.getY() - 1; k <= pos.getY() + 1; ++k) {
 					this
-						.scheduleSpecialChunkRender(ChunkSectionPos.getSectionCoord(j), ChunkSectionPos.getSectionCoord(k),
-							ChunkSectionPos.getSectionCoord(i), important);
+						.scheduleSpecialChunkRender(SectionPos.posToSectionCoord(j), SectionPos.posToSectionCoord(k),
+							SectionPos.posToSectionCoord(i), important);
 				}
 
 			}
@@ -164,8 +164,8 @@ public class WorldRendererChunkMixin implements WorldChunkBuilderAccess {
 
 				for (int k = minY - 1; k <= maxY + 1; ++k) {
 					this
-						.scheduleSpecialBlockRender(ChunkSectionPos.getSectionCoord(j), ChunkSectionPos.getSectionCoord(k),
-							ChunkSectionPos.getSectionCoord(i));
+						.scheduleSpecialBlockRender(SectionPos.posToSectionCoord(j), SectionPos.posToSectionCoord(k),
+							SectionPos.posToSectionCoord(i));
 				}
 
 			}
@@ -199,9 +199,8 @@ public class WorldRendererChunkMixin implements WorldChunkBuilderAccess {
 	}
 
 	@Override
-	public void setWorldSpecial(ClientWorld world) {
-
-		if (world == null) {
+	public void setWorldSpecial(ClientLevel level) {
+		if (level == null) {
 
 			if (this.specialChunks != null) {
 				this.specialChunks.clear();
@@ -224,27 +223,27 @@ public class WorldRendererChunkMixin implements WorldChunkBuilderAccess {
 	@Override
 	public void reloadSpecial() {
 
-		if (this.world != null) {
+		if (this.level != null) {
 
 			if (this.specialChunkBuilder == null) {
-				this.specialChunkBuilder = new SpecialChunkBuilder(this.world, ((WorldRenderer) (Object) this),
-					Util.getMainWorkerExecutor(), this.client.is64Bit(), this.specialBufferBuilderStorage);
+				this.specialChunkBuilder = new SpecialChunkBuilder(this.level, ((LevelRenderer) (Object) this),
+					Util.backgroundExecutor(), this.minecraft.is64Bit(), this.specialBufferBuilderStorage);
 			} else {
-				this.specialChunkBuilder.setWorld(this.world);
+				this.specialChunkBuilder.setWorld(this.level);
 			}
 
 			this.needsFullSpecialBuiltChunkUpdate = true;
 			this.recentlyCompiledSpecialChunks.clear();
-			RenderLayers.setFancyGraphicsOrBetter(MinecraftClient.isFancyGraphicsOrBetter());
-			this.viewDistance = this.client.options.getEffectiveViewDistance();
+			ItemBlockRenderTypes.setFancy(Minecraft.useFancyGraphics());
+			this.lastViewDistance = this.minecraft.options.getEffectiveRenderDistance();
 
 			if (this.specialChunks != null) {
 				this.specialChunks.clear();
 			}
 
 			this.specialChunkBuilder.reset();
-			this.specialChunks = new SpecialBuiltChunkStorage(this.specialChunkBuilder, this.world,
-				this.client.options.getEffectiveViewDistance(), ((WorldRenderer) (Object) this));
+			this.specialChunks = new SpecialBuiltChunkStorage(this.specialChunkBuilder, this.level,
+				this.minecraft.options.getEffectiveRenderDistance(), ((LevelRenderer) (Object) this));
 
 			if (this.lastFullSpecialBuiltChunkUpdate != null) {
 
@@ -258,7 +257,7 @@ public class WorldRendererChunkMixin implements WorldChunkBuilderAccess {
 
 			this.renderableSpecialChunks.set(new SpecialChunkBuilder.RenderableChunks(this.specialChunks.chunks.length));
 			this.specialChunkInfoList.clear();
-			Entity entity = this.client.getCameraEntity();
+			Entity entity = this.minecraft.getCameraEntity();
 
 			if (entity != null) {
 				this.specialChunks.updateCameraPosition(entity.getX(), entity.getZ());
@@ -270,19 +269,19 @@ public class WorldRendererChunkMixin implements WorldChunkBuilderAccess {
 
 	@Override
 	public void setupSpecialTerrain(Camera camera, Frustum frustum, boolean hasForcedFrustum, boolean spectator) {
-		Vec3d vec3d = camera.getPos();
+		Vec3 Vec3 = camera.getPosition();
 
-		if (this.client.options.getEffectiveViewDistance() != this.viewDistance) {
+		if (this.minecraft.options.getEffectiveRenderDistance() != this.lastViewDistance) {
 			this.reloadSpecial();
 		}
 
-		this.world.getProfiler().push("camera");
-		double d = this.client.player.getX();
-		double e = this.client.player.getY();
-		double f = this.client.player.getZ();
-		int i = ChunkSectionPos.getSectionCoord(d);
-		int j = ChunkSectionPos.getSectionCoord(e);
-		int k = ChunkSectionPos.getSectionCoord(f);
+		this.level.getProfiler().push("camera");
+		double d = this.minecraft.player.getX();
+		double e = this.minecraft.player.getY();
+		double f = this.minecraft.player.getZ();
+		int i = SectionPos.posToSectionCoord(d);
+		int j = SectionPos.posToSectionCoord(e);
+		int k = SectionPos.posToSectionCoord(f);
 
 		if (this.cameraSpecialChunkX != i || this.cameraSpecialChunkY != j || this.cameraSpecialChunkZ != k) {
 			this.cameraSpecialChunkX = i;
@@ -291,13 +290,13 @@ public class WorldRendererChunkMixin implements WorldChunkBuilderAccess {
 			this.specialChunks.updateCameraPosition(d, f);
 		}
 
-		this.specialChunkBuilder.setCameraPosition(vec3d);
-		this.world.getProfiler().swap("cull");
-		this.client.getProfiler().swap("culling");
-		BlockPos blockPos = camera.getBlockPos();
-		double g = Math.floor(vec3d.x / 8.0);
-		double h = Math.floor(vec3d.y / 8.0);
-		double l = Math.floor(vec3d.z / 8.0);
+		this.specialChunkBuilder.setCameraPosition(Vec3);
+		this.level.getProfiler().popPush("cull");
+		this.minecraft.getProfiler().popPush("culling");
+		BlockPos blockPos = camera.getBlockPosition();
+		double g = Math.floor(Vec3.x / 8.0);
+		double h = Math.floor(Vec3.y / 8.0);
+		double l = Math.floor(Vec3.z / 8.0);
 		this.needsFullSpecialBuiltChunkUpdate = this.needsFullSpecialBuiltChunkUpdate || g != this.lastSpecialCameraX || h != this.lastSpecialCameraY || l != this.lastSpecialCameraZ;
 		this.nextFullSpecialUpdateMilliseconds.updateAndGet(lx -> {
 
@@ -312,10 +311,10 @@ public class WorldRendererChunkMixin implements WorldChunkBuilderAccess {
 		this.lastSpecialCameraX = g;
 		this.lastSpecialCameraY = h;
 		this.lastSpecialCameraZ = l;
-		this.client.getProfiler().swap("update");
-		boolean bl = this.client.chunkCullingEnabled;
+		this.minecraft.getProfiler().popPush("update");
+		boolean bl = this.minecraft.smartCull;
 
-		if (spectator && this.world.getBlockState(blockPos).isOpaqueFullCube(this.world, blockPos)) {
+		if (spectator && this.level.getBlockState(blockPos).isSolidRender(this.level, blockPos)) {
 			bl = false;
 		}
 
@@ -323,28 +322,28 @@ public class WorldRendererChunkMixin implements WorldChunkBuilderAccess {
 
 			if (this.needsFullSpecialBuiltChunkUpdate && (this.lastFullSpecialBuiltChunkUpdate == null || this.lastFullSpecialBuiltChunkUpdate
 				.isDone())) {
-				this.client.getProfiler().push("full_update_schedule");
+				this.minecraft.getProfiler().push("full_update_schedule");
 				this.needsFullSpecialBuiltChunkUpdate = false;
 				boolean bl2 = bl;
-				this.lastFullSpecialBuiltChunkUpdate = Util.getMainWorkerExecutor().submit(() -> {
+				this.lastFullSpecialBuiltChunkUpdate = Util.backgroundExecutor().submit(() -> {
 					Queue<SpecialChunkBuilder.ChunkInfo> queue = Queues.<SpecialChunkBuilder.ChunkInfo>newArrayDeque();
 					this.addSpecialChunksToBuild(camera, queue);
 					SpecialChunkBuilder.RenderableChunks renderableChunksx = new SpecialChunkBuilder.RenderableChunks(
 						this.specialChunks.chunks.length);
 					this
-						.updateSpecialBuiltChunks(renderableChunksx.builtChunks, renderableChunksx.builtChunkMap, vec3d,
+						.updateSpecialBuiltChunks(renderableChunksx.builtChunks, renderableChunksx.builtChunkMap, Vec3,
 							queue, bl2);
 					this.renderableSpecialChunks.set(renderableChunksx);
 					this.needsSpecialFrustumUpdate.set(true);
 				});
-				this.client.getProfiler().pop();
+				this.minecraft.getProfiler().pop();
 			}
 
 			SpecialChunkBuilder.RenderableChunks renderableChunks = (SpecialChunkBuilder.RenderableChunks) this.renderableSpecialChunks
 				.get();
 
 			if (!this.recentlyCompiledSpecialChunks.isEmpty()) {
-				this.client.getProfiler().push("partial_update");
+				this.minecraft.getProfiler().push("partial_update");
 				Queue<SpecialChunkBuilder.ChunkInfo> queue = Queues.<SpecialChunkBuilder.ChunkInfo>newArrayDeque();
 
 				while (!this.recentlyCompiledSpecialChunks.isEmpty()) {
@@ -359,46 +358,46 @@ public class WorldRendererChunkMixin implements WorldChunkBuilderAccess {
 				}
 
 				this
-					.updateSpecialBuiltChunks(renderableChunks.builtChunks, renderableChunks.builtChunkMap, vec3d, queue,
+					.updateSpecialBuiltChunks(renderableChunks.builtChunks, renderableChunks.builtChunkMap, Vec3, queue,
 						bl);
 				this.needsSpecialFrustumUpdate.set(true);
-				this.client.getProfiler().pop();
+				this.minecraft.getProfiler().pop();
 			}
 
-			double m = Math.floor((double) (camera.getPitch() / 2.0F));
-			double n = Math.floor((double) (camera.getYaw() / 2.0F));
+			double m = Math.floor((double) (camera.getXRot() / 2.0F));
+			double n = Math.floor((double) (camera.getYRot() / 2.0F));
 
 			if (this.needsSpecialFrustumUpdate
 				.compareAndSet(true, false) || m != this.lastSpecialCameraPitch || n != this.lastSpecialCameraYaw) {
-				this.applySpecialFrustum(new Frustum(frustum).offsetToIncludeCamera(8));
+				this.applySpecialFrustum(new Frustum(frustum).offsetToFullyIncludeCameraCube(8));
 				this.lastSpecialCameraPitch = m;
 				this.lastSpecialCameraYaw = n;
 			}
 
 		}
 
-		this.client.getProfiler().pop();
+		this.minecraft.getProfiler().pop();
 	}
 
 	@Override
 	public void addSpecialChunksToBuild(Camera camera, Queue<SpecialChunkBuilder.ChunkInfo> chunkInfoQueue) {
-		Vec3d vec3d = camera.getPos();
-		BlockPos blockPos = camera.getBlockPos();
+		net.minecraft.world.phys.Vec3 vec3 = camera.getPosition();
+		BlockPos blockPos = camera.getBlockPosition();
 		SpecialChunkBuilder.BuiltChunk builtChunk = this.specialChunks.getRenderedChunk(blockPos);
 
 		if (builtChunk == null) {
-			boolean bl = blockPos.getY() > this.world.getBottomY();
-			int j = bl ? this.world.getTopY() - 8 : this.world.getBottomY() + 8;
-			int k = MathHelper.floor(vec3d.x / 16.0) * 16;
-			int l = MathHelper.floor(vec3d.z / 16.0) * 16;
+			boolean bl = blockPos.getY() > this.level.getMinBuildHeight();
+			int j = bl ? this.level.getHeight() - 8 : this.level.getMinBuildHeight() + 8;
+			int k = Mth.floor(vec3.x / 16.0) * 16;
+			int l = Mth.floor(vec3.z / 16.0) * 16;
 			List<SpecialChunkBuilder.ChunkInfo> list = Lists.<SpecialChunkBuilder.ChunkInfo>newArrayList();
 
-			for (int m = -this.viewDistance; m <= this.viewDistance; ++m) {
+			for (int m = -this.lastViewDistance; m <= this.lastViewDistance; ++m) {
 
-				for (int n = -this.viewDistance; n <= this.viewDistance; ++n) {
+				for (int n = -this.lastViewDistance; n <= this.lastViewDistance; ++n) {
 					SpecialChunkBuilder.BuiltChunk builtChunk2 = this.specialChunks
 						.getRenderedChunk(
-							new BlockPos(k + ChunkSectionPos.getOffsetPos(m, 8), j, l + ChunkSectionPos.getOffsetPos(n, 8)));
+							new BlockPos(k + SectionPos.sectionToBlockCoord(m, 8), j, l + SectionPos.sectionToBlockCoord(n, 8)));
 
 					if (builtChunk2 != null) {
 						list.add(new SpecialChunkBuilder.ChunkInfo(builtChunk2, null, 0));
@@ -410,7 +409,7 @@ public class WorldRendererChunkMixin implements WorldChunkBuilderAccess {
 
 			list
 				.sort(Comparator
-					.comparingDouble(chunkInfo -> blockPos.getSquaredDistance(chunkInfo.chunk.getOrigin().add(8, 8, 8))));
+					.comparingDouble(chunkInfo -> blockPos.distSqr(chunkInfo.chunk.getOrigin().offset(8, 8, 8))));
 			chunkInfoQueue.addAll(list);
 		} else {
 			chunkInfoQueue.add(new SpecialChunkBuilder.ChunkInfo(builtChunk, null, 0));
@@ -425,15 +424,15 @@ public class WorldRendererChunkMixin implements WorldChunkBuilderAccess {
 
 	@Override
 	public void updateSpecialBuiltChunks(LinkedHashSet<ChunkInfo> builtChunks,
-			SpecialChunkBuilder.ChunkInfoListMap builtChunkMap, Vec3d cameraPos, Queue<ChunkInfo> chunksToBuild,
-			boolean chunkCullingEnabled) {
-		BlockPos blockPos = new BlockPos(MathHelper.floor(cameraPos.x / 16.0) * 16,
-			MathHelper.floor(cameraPos.y / 16.0) * 16, MathHelper.floor(cameraPos.z / 16.0) * 16);
-		BlockPos blockPos2 = blockPos.add(8, 8, 8);
+										 SpecialChunkBuilder.ChunkInfoListMap builtChunkMap, net.minecraft.world.phys.Vec3 cameraPos, Queue<ChunkInfo> chunksToBuild,
+										 boolean chunkCullingEnabled) {
+		BlockPos blockPos = new BlockPos(Mth.floor(cameraPos.x / 16.0) * 16,
+			Mth.floor(cameraPos.y / 16.0) * 16, Mth.floor(cameraPos.z / 16.0) * 16);
+		BlockPos blockPos2 = blockPos.offset(8, 8, 8);
 		Entity
-			.setRenderDistanceMultiplier(MathHelper
-				.clamp((double) this.client.options.getEffectiveViewDistance() / 8.0, 1.0,
-					2.5) * this.client.options.getEntityDistanceScaling().get());
+			.setViewScale(Mth
+				.clamp((double) this.minecraft.options.getEffectiveRenderDistance() / 8.0, 1.0,
+					2.5) * this.minecraft.options.entityDistanceScaling().get());
 
 		while (!chunksToBuild.isEmpty()) {
 			ChunkInfo chunkInfo = chunksToBuild.poll();
@@ -541,21 +540,21 @@ public class WorldRendererChunkMixin implements WorldChunkBuilderAccess {
 							var10003 = 16;
 						}
 
-						BlockPos blockPos4 = blockPos3.add(var10001, var10002, var10003);
-						Vec3d vec3d = new Vec3d((double) blockPos4.getX(), (double) blockPos4.getY(),
+						BlockPos blockPos4 = blockPos3.offset(var10001, var10002, var10003);
+						Vec3 Vec3 = new Vec3((double) blockPos4.getX(), (double) blockPos4.getY(),
 							(double) blockPos4.getZ());
-						Vec3d vec3d2 = cameraPos.subtract(vec3d).normalize().multiply(CEIL_CUBEROOT_3_TIMES_16);
+						Vec3 Vec32 = cameraPos.subtract(Vec3).normalize().scale(CEILED_SECTION_DIAGONAL);
 						boolean bl3 = true;
 
-						while (cameraPos.subtract(vec3d).lengthSquared() > 3600.0) {
-							vec3d = vec3d.add(vec3d2);
+						while (cameraPos.subtract(Vec3).lengthSqr() > 3600.0) {
+							Vec3 = Vec3.add(Vec32);
 
-							if (vec3d.y > (double) this.world.getTopY() || vec3d.y < (double) this.world.getBottomY()) {
+							if (Vec3.y > (double) this.level.getMaxBuildHeight() || Vec3.y < (double) this.level.getMinBuildHeight()) {
 								break;
 							}
 
 							SpecialChunkBuilder.BuiltChunk builtChunk3 = this.specialChunks
-								.getRenderedChunk(BlockPos.create(vec3d.x, vec3d.y, vec3d.z));
+								.getRenderedChunk(BlockPos.containing(Vec3.x, Vec3.y, Vec3.z));
 
 							if (builtChunk3 == null || builtChunkMap.getInfo(builtChunk3) == null) {
 								bl3 = false;
@@ -601,35 +600,35 @@ public class WorldRendererChunkMixin implements WorldChunkBuilderAccess {
 			Direction direction) {
 		BlockPos blockPos = chunk.getNeighborPosition(direction);
 
-		if (MathHelper.abs(pos.getX() - blockPos.getX()) > this.viewDistance * 16) {
+		if (Mth.abs(pos.getX() - blockPos.getX()) > this.lastViewDistance * 16) {
 			return null;
-		} else if (MathHelper.abs(pos.getY() - blockPos.getY()) > this.viewDistance * 16 || blockPos.getY() < this.world
-			.getBottomY() || blockPos.getY() >= this.world.getTopY()) {
+		} else if (Mth.abs(pos.getY() - blockPos.getY()) > this.lastViewDistance * 16 || blockPos.getY() < this.level
+			.getMinBuildHeight() || blockPos.getY() >= this.level.getMaxBuildHeight()) {
 			return null;
 		} else {
-			return MathHelper.abs(pos.getZ() - blockPos.getZ()) > this.viewDistance * 16 ? null
+			return Mth.abs(pos.getZ() - blockPos.getZ()) > this.lastViewDistance * 16 ? null
 					: this.specialChunks.getRenderedChunk(blockPos);
 		}
 
 	}
 
 	@Override
-	public boolean isSpecialChunkNearMaxViewDistance(BlockPos blockPos, SpecialChunkBuilder.BuiltChunk builtChunk) {
-		int i = ChunkSectionPos.getSectionCoord(blockPos.getX());
-		int j = ChunkSectionPos.getSectionCoord(blockPos.getZ());
+	public boolean isSpecialChunkNearMaxViewDistance(BlockPos blockPos, BuiltChunk builtChunk) {
+		int i = SectionPos.posToSectionCoord(blockPos.getX());
+		int j = SectionPos.posToSectionCoord(blockPos.getZ());
 		BlockPos blockPos2 = builtChunk.getOrigin();
-		int k = ChunkSectionPos.getSectionCoord(blockPos2.getX());
-		int l = ChunkSectionPos.getSectionCoord(blockPos2.getZ());
-		return !ThreadedChunkManager.isWithinDistance(k, l, i, j, this.viewDistance - 2);
+		int k = SectionPos.posToSectionCoord(blockPos2.getX());
+		int l = SectionPos.posToSectionCoord(blockPos2.getZ());
+		return !ChunkMap.isChunkInRange(k, l, i, j, this.lastViewDistance - 2);
 	}
 
 	@Override
 	public void applySpecialFrustum(Frustum frustum) {
 
-		if (!MinecraftClient.getInstance().isOnThread()) {
+		if (!Minecraft.getInstance().isSameThread()) {
 			throw new IllegalStateException("applyFrustum called from wrong thread: " + Thread.currentThread().getName());
 		} else {
-			this.client.getProfiler().push("apply_frustum");
+			this.minecraft.getProfiler().push("apply_frustum");
 			this.specialChunkInfoList.clear();
 
 			for (SpecialChunkBuilder.ChunkInfo chunkInfo : ((SpecialChunkBuilder.RenderableChunks) this.renderableSpecialChunks
@@ -641,40 +640,40 @@ public class WorldRendererChunkMixin implements WorldChunkBuilderAccess {
 
 			}
 
-			this.client.getProfiler().pop();
+			this.minecraft.getProfiler().pop();
 		}
 
 	}
 
 	@Override
 	public void findSpecialChunksToRebuild(Camera camera) {
-		this.client.getProfiler().push("populate_chunks_to_compile");
-		LightingProvider lightingProvider = this.world.getLightingProvider();
-		ChunkRenderRegionCache chunkRenderRegionCache = new ChunkRenderRegionCache();
-		BlockPos blockPos = camera.getBlockPos();
+		this.minecraft.getProfiler().push("populate_chunks_to_compile");
+		LevelLightEngine lightingProvider = this.level.getLightEngine();
+		RenderRegionCache chunkRenderRegionCache = new RenderRegionCache();
+		BlockPos blockPos = camera.getBlockPosition();
 		List<SpecialChunkBuilder.BuiltChunk> list = Lists.<SpecialChunkBuilder.BuiltChunk>newArrayList();
 
 		for (SpecialChunkBuilder.ChunkInfo chunkInfo : this.specialChunkInfoList) {
 			SpecialChunkBuilder.BuiltChunk builtChunk = chunkInfo.chunk;
-			ChunkSectionPos chunkSectionPos = ChunkSectionPos.from(builtChunk.getOrigin());
+			SectionPos chunkSectionPos = SectionPos.of(builtChunk.getOrigin());
 
-			if (builtChunk.needsRebuild() && lightingProvider.isLightingEnabled(chunkSectionPos)) {
+			if (builtChunk.needsRebuild() && lightingProvider.lightOnInSection(chunkSectionPos)) {
 				boolean bl = false;
 
-				if (this.client.options.getPrioritizeChunkUpdates().get() == ChunkUpdatesPrioritization.NEARBY) {
-					BlockPos blockPos2 = builtChunk.getOrigin().add(8, 8, 8);
-					bl = blockPos2.getSquaredDistance(blockPos) < 768.0 || builtChunk.needsImportantRebuild();
-				} else if (this.client.options
-					.getPrioritizeChunkUpdates()
-					.get() == ChunkUpdatesPrioritization.PLAYER_AFFECTED) {
+				if (this.minecraft.options.prioritizeChunkUpdates().get() == PrioritizeChunkUpdates.NEARBY) {
+					BlockPos blockPos2 = builtChunk.getOrigin().offset(8, 8, 8);
+					bl = blockPos2.distSqr(blockPos) < 768.0 || builtChunk.needsImportantRebuild();
+				} else if (this.minecraft.options
+					.prioritizeChunkUpdates()
+					.get() == PrioritizeChunkUpdates.PLAYER_AFFECTED) {
 					bl = builtChunk.needsImportantRebuild();
 				}
 
 				if (bl) {
-					this.client.getProfiler().push("build_near_sync");
+					this.minecraft.getProfiler().push("build_near_sync");
 					this.specialChunkBuilder.rebuild(builtChunk, chunkRenderRegionCache);
 					builtChunk.cancelRebuild();
-					this.client.getProfiler().pop();
+					this.minecraft.getProfiler().pop();
 				} else {
 					list.add(builtChunk);
 				}
@@ -683,16 +682,16 @@ public class WorldRendererChunkMixin implements WorldChunkBuilderAccess {
 
 		}
 
-		this.client.getProfiler().swap("upload");
+		this.minecraft.getProfiler().popPush("upload");
 		this.specialChunkBuilder.upload();
-		this.client.getProfiler().swap("schedule_async_compile");
+		this.minecraft.getProfiler().popPush("schedule_async_compile");
 
 		for (SpecialChunkBuilder.BuiltChunk builtChunk2 : list) {
 			builtChunk2.scheduleRebuild(this.specialChunkBuilder, chunkRenderRegionCache);
 			builtChunk2.cancelRebuild();
 		}
 
-		this.client.getProfiler().pop();
+		this.minecraft.getProfiler().pop();
 	}
 
 	@Override

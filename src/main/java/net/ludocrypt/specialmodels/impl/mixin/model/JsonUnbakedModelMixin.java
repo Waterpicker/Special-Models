@@ -3,6 +3,13 @@ package net.ludocrypt.specialmodels.impl.mixin.model;
 import java.util.Map;
 import java.util.function.Function;
 
+import net.minecraft.client.renderer.block.model.BlockModel;
+import net.minecraft.client.renderer.texture.TextureAtlasSprite;
+import net.minecraft.client.resources.model.*;
+import net.minecraft.client.resources.model.BakedModel;
+import net.minecraft.client.resources.model.Material;
+import net.minecraft.client.resources.model.ModelBaker;
+import net.minecraft.resources.ResourceLocation;
 import org.slf4j.Logger;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -17,27 +24,19 @@ import com.google.common.collect.Maps;
 import net.ludocrypt.specialmodels.api.SpecialModelRenderer;
 import net.ludocrypt.specialmodels.impl.access.BakedModelAccess;
 import net.ludocrypt.specialmodels.impl.access.UnbakedModelAccess;
-import net.minecraft.client.render.model.BakedModel;
-import net.minecraft.client.render.model.ModelBakeSettings;
-import net.minecraft.client.render.model.ModelBaker;
-import net.minecraft.client.render.model.UnbakedModel;
-import net.minecraft.client.render.model.json.JsonUnbakedModel;
-import net.minecraft.client.resource.Material;
-import net.minecraft.client.texture.Sprite;
-import net.minecraft.util.Identifier;
 
-@Mixin(JsonUnbakedModel.class)
+@Mixin(BlockModel.class)
 public abstract class JsonUnbakedModelMixin implements UnbakedModelAccess {
 
 	@Shadow
 	@Final
 	private static Logger LOGGER;
 	@Unique
-	private Map<SpecialModelRenderer, Identifier> subModels = Maps.newHashMap();
+	private Map<SpecialModelRenderer, ResourceLocation> subModels = Maps.newHashMap();
 
-	@Inject(method = "Lnet/minecraft/client/render/model/json/JsonUnbakedModel;bake(Lnet/minecraft/client/render/model/ModelBaker;Lnet/minecraft/client/render/model/json/JsonUnbakedModel;Ljava/util/function/Function;Lnet/minecraft/client/render/model/ModelBakeSettings;Lnet/minecraft/util/Identifier;Z)Lnet/minecraft/client/render/model/BakedModel;", at = @At("RETURN"), cancellable = true)
-	private void specialModels$bake(ModelBaker loader, JsonUnbakedModel parent, Function<Material, Sprite> textureGetter,
-			ModelBakeSettings settings, Identifier id, boolean hasDepth, CallbackInfoReturnable<BakedModel> ci) {
+	@Inject(method = "bake(Lnet/minecraft/client/resources/model/ModelBaker;Lnet/minecraft/client/renderer/block/model/BlockModel;Ljava/util/function/Function;Lnet/minecraft/client/resources/model/ModelState;Lnet/minecraft/resources/ResourceLocation;Z)Lnet/minecraft/client/resources/model/BakedModel;", at = @At("RETURN"), cancellable = true)
+	private void specialModels$bake(ModelBaker loader, BlockModel parent, Function<Material, TextureAtlasSprite> textureGetter,
+									ModelState settings, ResourceLocation id, boolean hasDepth, CallbackInfoReturnable<BakedModel> ci) {
 		this.getSubModels().forEach((modelRenderer, modelId) -> {
 
 			if (!modelId.equals(id)) {
@@ -53,7 +52,7 @@ public abstract class JsonUnbakedModelMixin implements UnbakedModelAccess {
 	}
 
 	@Override
-	public Map<SpecialModelRenderer, Identifier> getSubModels() {
+	public Map<SpecialModelRenderer, ResourceLocation> getSubModels() {
 		return subModels;
 	}
 

@@ -5,6 +5,10 @@ import java.nio.FloatBuffer;
 import java.util.List;
 import java.util.function.Supplier;
 
+import com.mojang.blaze3d.platform.MemoryTracker;
+import com.mojang.blaze3d.vertex.*;
+import com.mojang.blaze3d.vertex.VertexFormat.Mode;
+import net.minecraft.util.Mth;
 import org.apache.commons.lang3.mutable.MutableInt;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Vector3f;
@@ -12,19 +16,9 @@ import org.lwjgl.opengl.GL15;
 import org.lwjgl.system.MemoryUtil;
 import org.slf4j.Logger;
 
-import com.mojang.blaze3d.AllocationUtil;
 import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.BufferVertexConsumer;
-import com.mojang.blaze3d.vertex.FixedColorVertexConsumer;
-import com.mojang.blaze3d.vertex.VertexBuffer;
-import com.mojang.blaze3d.vertex.VertexConsumer;
-import com.mojang.blaze3d.vertex.VertexFormat;
-import com.mojang.blaze3d.vertex.VertexFormat.DrawMode;
 import com.mojang.blaze3d.vertex.VertexFormat.IndexType;
-import com.mojang.blaze3d.vertex.VertexFormatElement;
-import com.mojang.blaze3d.vertex.VertexFormats;
-import com.mojang.blaze3d.vertex.VertexSorting;
 import com.mojang.logging.LogUtils;
 
 import it.unimi.dsi.fastutil.ints.IntConsumer;
@@ -32,9 +26,8 @@ import net.ludocrypt.specialmodels.impl.mixin.render.UsageAccessor;
 import net.ludocrypt.specialmodels.impl.mixin.render.VertexBufferAccessor;
 import net.ludocrypt.specialmodels.impl.render.SpecialVertexFormats;
 import net.ludocrypt.specialmodels.impl.render.Vec4b;
-import net.minecraft.util.math.MathHelper;
 
-public class SpecialBufferBuilder extends FixedColorVertexConsumer implements BufferVertexConsumer {
+public class SpecialBufferBuilder extends DefaultedVertexConsumer implements BufferVertexConsumer {
 
 	private static final Logger LOGGER = LogUtils.getLogger();
 
@@ -53,7 +46,7 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 	private int elementIndex;
 
 	private VertexFormat format;
-	private DrawMode drawMode;
+	private Mode drawMode;
 
 	private boolean textured;
 	private boolean hasOverlay;
@@ -71,7 +64,7 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 	private Supplier<Vec4b> state;
 
 	public SpecialBufferBuilder(int initialCapacity) {
-		this.buffer = AllocationUtil.allocateByteBuffer(initialCapacity * 6);
+		this.buffer = MemoryTracker.create(initialCapacity * 6);
 	}
 
 	private void grow() {
@@ -84,7 +77,7 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 			int oldSize = this.buffer.capacity();
 			int newSize = oldSize + roundBufferSize(size);
 			LOGGER.debug("Needed to grow BufferBuilder buffer: Old size {} bytes, new size {} bytes.", oldSize, newSize);
-			ByteBuffer byteBuffer = AllocationUtil.resizeByteBuffer(this.buffer, newSize);
+			ByteBuffer byteBuffer = MemoryTracker.resize(this.buffer, newSize);
 			byteBuffer.rewind();
 			this.buffer = byteBuffer;
 		}
@@ -110,7 +103,7 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 
 	public void setQuadSorting(VertexSorting sorting) {
 
-		if (this.drawMode == VertexFormat.DrawMode.QUADS) {
+		if (this.drawMode == VertexFormat.Mode.QUADS) {
 			this.quadSorting = sorting;
 
 			if (this.sortingPoints == null) {
@@ -135,7 +128,7 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 		this.indexOnly = true;
 	}
 
-	public void begin(DrawMode drawMode, VertexFormat format) {
+	public void begin(Mode drawMode, VertexFormat format) {
 
 		if (this.building) {
 			throw new IllegalStateException("Already building!");
@@ -154,8 +147,8 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 
 		if (this.format != format) {
 			this.format = format;
-			boolean hasTextureAndOverlay = format == VertexFormats.POSITION_COLOR_TEXTURE_OVERLAY_LIGHT_NORMAL;
-			boolean hasTexture = format == VertexFormats.POSITION_COLOR_TEXTURE_LIGHT_NORMAL;
+			boolean hasTextureAndOverlay = format == DefaultVertexFormat.NEW_ENTITY;
+			boolean hasTexture = format == DefaultVertexFormat.NEW_ENTITY;
 			boolean hasTextureAndState = format == SpecialVertexFormats.POSITION_COLOR_TEXTURE_LIGHT_NORMAL_STATE;
 			this.textured = hasTextureAndOverlay || hasTexture || hasTextureAndState;
 			this.hasOverlay = hasTextureAndOverlay;
@@ -254,12 +247,12 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 	private RenderedBuffer buildBatchParameters() {
 		int drawCount = this.drawMode.indexCount(this.vertexCount);
 		int vertexSize = !this.indexOnly ? this.vertexCount * this.format.getVertexSize() : 0;
-		IndexType type = IndexType.getSmallestIndexType(drawCount);
+		IndexType type = IndexType.least(drawCount);
 		boolean textured = true;
 		int offset = vertexSize;
 
 		if (this.sortingPoints != null) {
-			int growth = MathHelper.roundUpToMultiple(drawCount * type.bytes, 4);
+			int growth = Mth.roundToward(drawCount * type.bytes, 4);
 			this.grow(growth);
 			this.putSortedIndices(type);
 			this.elementOffset += growth;
@@ -304,7 +297,7 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 	}
 
 	@Override
-	public void next() {
+	public void endVertex() {
 
 		if (this.elementIndex != 0) {
 			throw new IllegalStateException("Not filled all elements of the vertex");
@@ -312,7 +305,7 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 			this.vertexCount++;
 			this.grow();
 
-			if (this.drawMode == VertexFormat.DrawMode.LINES || this.drawMode == VertexFormat.DrawMode.LINE_STRIP) {
+			if (this.drawMode == VertexFormat.Mode.LINES || this.drawMode == VertexFormat.Mode.LINE_STRIP) {
 				int size = this.format.getVertexSize();
 				this.buffer.put(this.elementOffset, this.buffer, this.elementOffset - size, size);
 				this.elementOffset += size;
@@ -329,17 +322,17 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 		List<VertexFormatElement> elements = this.format.getElements();
 
 		this.elementIndex = (this.elementIndex + 1) % elements.size();
-		this.elementOffset += this.currentElement.getByteLength();
+		this.elementOffset += this.currentElement.getByteSize();
 
 		VertexFormatElement element = elements.get(this.elementIndex);
 		this.currentElement = element;
 
-		if (element.getType() == VertexFormatElement.Type.PADDING) {
+		if (element.getUsage() == VertexFormatElement.Usage.PADDING) {
 			this.nextElement();
 		}
 
-		if (this.colorFixed && this.currentElement.getType() == VertexFormatElement.Type.COLOR) {
-			BufferVertexConsumer.super.color(this.fixedRed, this.fixedGreen, this.fixedBlue, this.fixedAlpha);
+		if (this.defaultColorSet && this.currentElement.getUsage() == VertexFormatElement.Usage.COLOR) {
+			BufferVertexConsumer.super.color(this.defaultR, this.defaultG, this.defaultB, this.defaultA);
 		}
 
 	}
@@ -347,7 +340,7 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 	@Override
 	public VertexConsumer color(int red, int green, int blue, int alpha) {
 
-		if (this.colorFixed) {
+		if (this.defaultColorSet) {
 			throw new IllegalStateException();
 		} else {
 			return BufferVertexConsumer.super.color(red, green, blue, alpha);
@@ -359,7 +352,7 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 	public void vertex(float x, float y, float z, float red, float green, float blue, float alpha, float u, float v,
 			int overlay, int light, float normalX, float normalY, float normalZ) {
 
-		if (this.colorFixed) {
+		if (this.defaultColorSet) {
 			throw new IllegalStateException();
 		} else if (this.textured) {
 			this.putFloat(0, x);
@@ -381,9 +374,9 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 
 			this.putShort(o + 0, (short) (light & 65535));
 			this.putShort(o + 2, (short) (light >> 16 & 65535));
-			this.putByte(o + 4, BufferVertexConsumer.packByte(normalX));
-			this.putByte(o + 5, BufferVertexConsumer.packByte(normalY));
-			this.putByte(o + 6, BufferVertexConsumer.packByte(normalZ));
+			this.putByte(o + 4, BufferVertexConsumer.normalIntValue(normalX));
+			this.putByte(o + 5, BufferVertexConsumer.normalIntValue(normalY));
+			this.putByte(o + 6, BufferVertexConsumer.normalIntValue(normalZ));
 
 			if (format == SpecialVertexFormats.POSITION_COLOR_TEXTURE_LIGHT_NORMAL_STATE) {
 				Vec4b state = this.state.get();
@@ -395,7 +388,7 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 			}
 
 			this.elementOffset += o + 8;
-			this.next();
+			this.endVertex();
 		} else {
 			super.vertex(x, y, z, red, green, blue, alpha, u, v, overlay, light, normalX, normalY, normalZ);
 		}
@@ -426,7 +419,7 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 	}
 
 	@Override
-	public VertexFormatElement getCurrentElement() {
+	public VertexFormatElement currentElement() {
 
 		if (this.currentElement == null) {
 			throw new IllegalStateException("BufferBuilder not started");
@@ -452,7 +445,7 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 		this.state = state;
 	}
 
-	public static record DrawArrayParameters(VertexFormat vertexFormat, int vertexCount, int indexCount, DrawMode mode,
+	public static record DrawArrayParameters(VertexFormat vertexFormat, int vertexCount, int indexCount, Mode mode,
 			IndexType indexType, boolean indexOnly, boolean textured) {
 
 		public int getVertexBufferSize() {
@@ -491,7 +484,7 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 			return this.indexCount;
 		}
 
-		public DrawMode getMode() {
+		public Mode getMode() {
 			return this.mode;
 		}
 
@@ -553,18 +546,18 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 
 		public void upload(VertexBuffer buffer) {
 
-			if (!buffer.invalid()) {
+			if (!buffer.isInvalid()) {
 				RenderSystem.assertOnRenderThread();
 
 				try {
 					DrawArrayParameters params = this.getParameters();
 					((VertexBufferAccessor) buffer)
-						.setVertexFormat(this.uploadAndBindFormat(buffer, params, this.getVertexBuffer()));
+						.setFormat(this.uploadAndBindFormat(buffer, params, this.getVertexBuffer()));
 					((VertexBufferAccessor) buffer)
-						.setIndexBuffer(this.uploadIndexBuffer(buffer, params, this.getIndexBuffer()));
+						.setSequentialIndices(this.uploadIndexBuffer(buffer, params, this.getIndexBuffer()));
 					((VertexBufferAccessor) buffer).setIndexCount(params.getIndexCount());
 					((VertexBufferAccessor) buffer).setIndexType(params.getIndexType());
-					((VertexBufferAccessor) buffer).setDrawMode(params.getMode());
+					((VertexBufferAccessor) buffer).setMode(params.getMode());
 				} finally {
 					this.release();
 				}
@@ -576,14 +569,14 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 		private VertexFormat uploadAndBindFormat(VertexBuffer buffer, DrawArrayParameters parameters, ByteBuffer bytes) {
 			boolean rebind = false;
 
-			if (!parameters.getVertexFormat().equals(((VertexBufferAccessor) buffer).getVertexFormat())) {
+			if (!parameters.getVertexFormat().equals(((VertexBufferAccessor) buffer).getFormat())) {
 
-				if (((VertexBufferAccessor) buffer).getVertexFormat() != null) {
-					((VertexBufferAccessor) buffer).getVertexFormat().clearAttribState();
+				if (((VertexBufferAccessor) buffer).getFormat() != null) {
+					((VertexBufferAccessor) buffer).getFormat().clearBufferState();
 				}
 
 				GlStateManager._glBindBuffer(GL15.GL_ARRAY_BUFFER, ((VertexBufferAccessor) buffer).getVertexBufferId());
-				parameters.getVertexFormat().setupAttribState();
+				parameters.getVertexFormat().setupBufferState();
 				rebind = true;
 			}
 
@@ -602,7 +595,7 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 		}
 
 		@Nullable
-		private RenderSystem.IndexBuffer uploadIndexBuffer(VertexBuffer buffer, DrawArrayParameters parameters,
+		private RenderSystem.AutoStorageIndexBuffer uploadIndexBuffer(VertexBuffer buffer, DrawArrayParameters parameters,
 				ByteBuffer bytes) {
 
 			if (!parameters.isTextured()) {
@@ -613,11 +606,11 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 						((UsageAccessor) (Object) ((VertexBufferAccessor) buffer).getUsage()).getId());
 				return null;
 			} else {
-				RenderSystem.IndexBuffer indexBuffer = RenderSystem.getSequentialBuffer(parameters.getMode());
+				RenderSystem.AutoStorageIndexBuffer indexBuffer = RenderSystem.getSequentialBuffer(parameters.getMode());
 
-				if (indexBuffer != ((VertexBufferAccessor) buffer).getIndexBuffer() || !indexBuffer
-					.hasSize(parameters.getIndexCount())) {
-					indexBuffer.bindWithSize(parameters.getIndexCount());
+				if (indexBuffer != ((VertexBufferAccessor) buffer).getSequentialIndices() || !indexBuffer
+					.hasStorage(parameters.getIndexCount())) {
+					indexBuffer.bind(parameters.getIndexCount());
 				}
 
 				return indexBuffer;
@@ -627,7 +620,7 @@ public class SpecialBufferBuilder extends FixedColorVertexConsumer implements Bu
 
 	}
 
-	public static record SortState(DrawMode drawMode, int vertexCount, @Nullable Vector3f[] sortingPoints,
+	public static record SortState(Mode drawMode, int vertexCount, @Nullable Vector3f[] sortingPoints,
 			@Nullable VertexSorting quadSorting) {
 
 	}

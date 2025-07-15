@@ -1,7 +1,7 @@
 accessWidener v1 named
-accessible class net/minecraft/registry/Registries$RegistryBootstrap
-accessible class net/minecraft/client/render/WorldRenderer$ChunkInfo
-accessible field net/minecraft/client/render/WorldRenderer$ChunkInfo chunk Lnet/minecraft/client/render/chunk/ChunkBuilder$BuiltChunk;
-accessible class net/minecraft/client/render/chunk/ChunkBuilder$Result
-accessible class net/minecraft/client/render/chunk/ChunkBuilder$BuiltChunk$RebuildTask
-accessible class net/minecraft/client/render/chunk/ChunkBuilder$BuiltChunk$RebuildTask$RenderedChunkData
+accessible class net/minecraft/core/registries/BuiltInRegistries$RegistryBootstrap
+accessible class net/minecraft/client/renderer/LevelRenderer$RenderChunkInfo
+accessible field net/minecraft/client/renderer/LevelRenderer$RenderChunkInfo chunk Lnet/minecraft/client/renderer/chunk/ChunkRenderDispatcher$RenderChunk;
+accessible class net/minecraft/client/renderer/chunk/ChunkRenderDispatcher$ChunkTaskResult
+accessible class net/minecraft/client/renderer/chunk/ChunkRenderDispatcher$RenderChunk$RebuildTask
+accessible class net/minecraft/client/renderer/chunk/ChunkRenderDispatcher$RenderChunk$RebuildTask$CompileResults

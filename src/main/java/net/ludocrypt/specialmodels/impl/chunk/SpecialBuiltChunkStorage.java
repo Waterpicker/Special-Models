@@ -1,24 +1,23 @@
 package net.ludocrypt.specialmodels.impl.chunk;
 
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.util.Mth;
+import net.minecraft.world.level.Level;
 import org.jetbrains.annotations.Nullable;
-
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.render.WorldRenderer;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.MathHelper;
-import net.minecraft.world.World;
 
 public class SpecialBuiltChunkStorage {
 
-	protected final WorldRenderer worldRenderer;
-	protected final World world;
+	protected final LevelRenderer worldRenderer;
+	protected final Level world;
 	protected int sizeY;
 	protected int sizeX;
 	protected int sizeZ;
 	public SpecialChunkBuilder.BuiltChunk[] chunks;
 
-	public SpecialBuiltChunkStorage(SpecialChunkBuilder SpecialChunkBuilder, World world, int viewDistance,
-			WorldRenderer worldRenderer) {
+	public SpecialBuiltChunkStorage(SpecialChunkBuilder SpecialChunkBuilder, Level world, int viewDistance,
+									LevelRenderer worldRenderer) {
 		this.worldRenderer = worldRenderer;
 		this.world = world;
 		this.setViewDistance(viewDistance);
@@ -27,7 +26,7 @@ public class SpecialBuiltChunkStorage {
 
 	protected void createChunks(SpecialChunkBuilder SpecialChunkBuilder) {
 
-		if (!MinecraftClient.getInstance().isOnThread()) {
+		if (!Minecraft.getInstance().isSameThread()) {
 			throw new IllegalStateException("createChunks called from wrong thread: " + Thread.currentThread().getName());
 		} else {
 			int i = this.sizeX * this.sizeY * this.sizeZ;
@@ -65,13 +64,13 @@ public class SpecialBuiltChunkStorage {
 	protected void setViewDistance(int viewDistance) {
 		int i = viewDistance * 2 + 1;
 		this.sizeX = i;
-		this.sizeY = this.world.countVerticalSections();
+		this.sizeY = this.world.getSectionsCount();
 		this.sizeZ = i;
 	}
 
 	public void updateCameraPosition(double x, double z) {
-		int i = MathHelper.ceil(x);
-		int j = MathHelper.ceil(z);
+		int i = Mth.ceil(x);
+		int j = Mth.ceil(z);
 
 		for (int k = 0; k < this.sizeX; ++k) {
 			int l = this.sizeX * 16;
@@ -84,9 +83,9 @@ public class SpecialBuiltChunkStorage {
 				int r = q + Math.floorMod(o * 16 - q, p);
 
 				for (int s = 0; s < this.sizeY; ++s) {
-					int t = this.world.getBottomY() + s * 16;
+					int t = this.world.getMinBuildHeight() + s * 16;
 					SpecialChunkBuilder.BuiltChunk builtChunk = this.chunks[this.getChunkIndex(k, s, o)];
-					BlockPos blockPos = builtChunk.getOrigin().toImmutable();
+					BlockPos blockPos = builtChunk.getOrigin().immutable();
 
 					if (n != blockPos.getX() || t != blockPos.getY() || r != blockPos.getZ()) {
 						builtChunk.setOrigin(n, t, r);
@@ -102,7 +101,7 @@ public class SpecialBuiltChunkStorage {
 
 	public void scheduleRebuild(int x, int y, int z, boolean important) {
 		int i = Math.floorMod(x, this.sizeX);
-		int j = Math.floorMod(y - this.world.getBottomSectionCoord(), this.sizeY);
+		int j = Math.floorMod(y - this.world.getMinSection(), this.sizeY);
 		int k = Math.floorMod(z, this.sizeZ);
 		SpecialChunkBuilder.BuiltChunk builtChunk = this.chunks[this.getChunkIndex(i, j, k)];
 		builtChunk.scheduleRebuild(important);
@@ -110,13 +109,13 @@ public class SpecialBuiltChunkStorage {
 
 	@Nullable
 	public SpecialChunkBuilder.BuiltChunk getRenderedChunk(BlockPos pos) {
-		int i = MathHelper.floorDiv(pos.getX(), 16);
-		int j = MathHelper.floorDiv(pos.getY() - this.world.getBottomY(), 16);
-		int k = MathHelper.floorDiv(pos.getZ(), 16);
+		int i = Mth.floorDiv(pos.getX(), 16);
+		int j = Mth.floorDiv(pos.getY() - this.world.getMinBuildHeight(), 16);
+		int k = Mth.floorDiv(pos.getZ(), 16);
 
 		if (j >= 0 && j < this.sizeY) {
-			i = MathHelper.floorMod(i, this.sizeX);
-			k = MathHelper.floorMod(k, this.sizeZ);
+			i = Mth.positiveModulo(i, this.sizeX);
+			k = Mth.positiveModulo(k, this.sizeZ);
 			return this.chunks[this.getChunkIndex(i, j, k)];
 		} else {
 			return null;

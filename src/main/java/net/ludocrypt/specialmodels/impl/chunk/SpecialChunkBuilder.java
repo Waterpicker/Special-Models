@@ -16,19 +16,45 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
+import com.mojang.blaze3d.vertex.*;
+import com.mojang.blaze3d.vertex.VertexFormat.Mode;
+import net.fabricmc.api.EnvType;
+import net.fabricmc.api.Environment;
+import net.minecraft.CrashReport;
+import net.minecraft.Util;
+import net.minecraft.client.Camera;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.block.BlockRenderDispatcher;
+import net.minecraft.client.renderer.block.ModelBlockRenderer;
+import net.minecraft.client.renderer.block.model.BakedQuad;
+import net.minecraft.client.renderer.chunk.RenderChunkRegion;
+import net.minecraft.client.renderer.chunk.RenderRegionCache;
+import net.minecraft.client.renderer.chunk.VisGraph;
+import net.minecraft.client.renderer.chunk.VisibilitySet;
+import net.minecraft.client.renderer.texture.OverlayTexture;
+import net.minecraft.client.resources.model.BakedModel;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.SectionPos;
+import net.minecraft.data.models.blockstates.PropertyDispatch;
+import net.minecraft.data.models.blockstates.PropertyDispatch.QuadFunction;
+import net.minecraft.util.RandomSource;
+import net.minecraft.util.thread.ProcessorMailbox;
+import net.minecraft.world.level.block.RenderShape;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.ChunkStatus;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 import org.lwjgl.system.MemoryStack;
-import org.quiltmc.loader.api.minecraft.ClientOnly;
 import org.slf4j.Logger;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Queues;
 import com.google.common.primitives.Doubles;
-import com.mojang.blaze3d.vertex.VertexBuffer;
-import com.mojang.blaze3d.vertex.VertexFormat;
-import com.mojang.blaze3d.vertex.VertexFormat.DrawMode;
-import com.mojang.blaze3d.vertex.VertexFormats;
-import com.mojang.blaze3d.vertex.VertexSorting;
 import com.mojang.datafixers.util.Pair;
 import com.mojang.logging.LogUtils;
 
@@ -44,36 +70,8 @@ import net.ludocrypt.specialmodels.impl.chunk.SpecialChunkBuilder.BuiltChunk.Tas
 import net.ludocrypt.specialmodels.impl.render.MutableQuad;
 import net.ludocrypt.specialmodels.impl.render.MutableVertice;
 import net.ludocrypt.specialmodels.impl.render.SpecialVertexFormats;
-import net.minecraft.block.BlockRenderType;
-import net.minecraft.block.BlockState;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.render.Camera;
-import net.minecraft.client.render.OverlayTexture;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.render.WorldRenderer;
-import net.minecraft.client.render.block.BlockModelRenderer;
-import net.minecraft.client.render.block.BlockRenderManager;
-import net.minecraft.client.render.chunk.ChunkOcclusionData;
-import net.minecraft.client.render.chunk.ChunkOcclusionDataBuilder;
-import net.minecraft.client.render.chunk.ChunkRenderRegion;
-import net.minecraft.client.render.chunk.ChunkRenderRegionCache;
-import net.minecraft.client.render.model.BakedModel;
-import net.minecraft.client.render.model.BakedQuad;
-import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.client.world.ClientWorld;
-import net.minecraft.data.client.model.BlockStateVariantMap.QuadFunction;
-import net.minecraft.util.Util;
-import net.minecraft.util.crash.CrashReport;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.ChunkSectionPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.util.random.RandomGenerator;
-import net.minecraft.util.thread.TaskExecutor;
-import net.minecraft.world.chunk.ChunkStatus;
 
-@ClientOnly
+@Environment(EnvType.CLIENT)
 public class SpecialChunkBuilder {
 
 	private static final Logger LOGGER = LogUtils.getLogger();
@@ -90,27 +88,27 @@ public class SpecialChunkBuilder {
 	private volatile int bufferCount;
 
 	private final SpecialBufferBuilderStorage buffers;
-	private final TaskExecutor<Runnable> mailbox;
+	private final ProcessorMailbox<Runnable> mailbox;
 	private final Executor executor;
 
-	private MinecraftClient client;
-	private WorldRenderer worldRenderer;
-	private ClientWorld world;
+	private Minecraft client;
+	private LevelRenderer worldRenderer;
+	private ClientLevel world;
 
-	private Vec3d cameraPosition = Vec3d.ZERO;
+	private Vec3 cameraPosition = Vec3.ZERO;
 
-	public SpecialChunkBuilder(ClientWorld world, WorldRenderer renderer, Executor executor, boolean useMaxThreads,
+	public SpecialChunkBuilder(ClientLevel world, LevelRenderer renderer, Executor executor, boolean useMaxThreads,
 			SpecialBufferBuilderStorage buffers) {
-		this.client = MinecraftClient.getInstance();
+		this.client = Minecraft.getInstance();
 		this.worldRenderer = renderer;
 		this.world = world;
 		this.buffers = buffers;
 
 		int layer = Math
 			.max(1,
-				(int) (Runtime.getRuntime().maxMemory() * 0.3) / (RenderLayer
-					.getSolid()
-					.getExpectedBufferSize() * SpecialModelRenderer.SPECIAL_MODEL_RENDERER.size() * 4) - 1);
+				(int) (Runtime.getRuntime().maxMemory() * 0.3) / (RenderType
+					.solid()
+					.bufferSize() * SpecialModelRenderer.SPECIAL_MODEL_RENDERER.size() * 4) - 1);
 
 		int avaliable = Runtime.getRuntime().availableProcessors();
 		int minThreads = useMaxThreads ? avaliable : Math.min(avaliable, 4);
@@ -141,11 +139,11 @@ public class SpecialChunkBuilder {
 
 		this.executor = executor;
 
-		this.mailbox = TaskExecutor.create(executor, "Special Chunk Renderer");
-		this.mailbox.send(this::scheduleRunTasks);
+		this.mailbox = ProcessorMailbox.create(executor, "Special Chunk Renderer");
+		this.mailbox.tell(this::scheduleRunTasks);
 	}
 
-	public void setWorld(ClientWorld world) {
+	public void setWorld(ClientLevel world) {
 		this.world = world;
 	}
 
@@ -159,14 +157,14 @@ public class SpecialChunkBuilder {
 				this.queuedTaskCount = this.highPriorityChunksToBuild.size() + this.chunksToBuild.size();
 				this.bufferCount = this.threadBuffers.size();
 				CompletableFuture
-					.supplyAsync(Util.debugSupplier(task.name(), () -> task.run(storage)), this.executor)
+					.supplyAsync(Util.wrapThreadWithTaskName(task.name(), () -> task.run(storage)), this.executor)
 					.thenCompose(future -> future)
 					.whenComplete((result, throwable) -> {
 
 						if (throwable != null) {
-							MinecraftClient.getInstance().setCrashReport(CrashReport.create(throwable, "Batching chunks"));
+							Minecraft.getInstance().delayCrash(CrashReport.forThrowable(throwable, "Batching chunks"));
 						} else {
-							this.mailbox.send(() -> {
+							this.mailbox.tell(() -> {
 
 								if (result == SpecialChunkBuilder.Result.SUCCESSFUL) {
 									storage.clear();
@@ -230,11 +228,11 @@ public class SpecialChunkBuilder {
 		return this.bufferCount;
 	}
 
-	public void setCameraPosition(Vec3d cameraPosition) {
+	public void setCameraPosition(Vec3 cameraPosition) {
 		this.cameraPosition = cameraPosition;
 	}
 
-	public Vec3d getCameraPosition() {
+	public Vec3 getCameraPosition() {
 		return this.cameraPosition;
 	}
 
@@ -247,7 +245,7 @@ public class SpecialChunkBuilder {
 
 	}
 
-	public void rebuild(BuiltChunk chunk, ChunkRenderRegionCache cache) {
+	public void rebuild(BuiltChunk chunk, RenderRegionCache cache) {
 		chunk.rebuild(cache);
 	}
 
@@ -256,7 +254,7 @@ public class SpecialChunkBuilder {
 	}
 
 	public void send(Task task) {
-		this.mailbox.send(() -> {
+		this.mailbox.tell(() -> {
 
 			if (task.highPriority) {
 				this.highPriorityChunksToBuild.offer(task);
@@ -273,7 +271,7 @@ public class SpecialChunkBuilder {
 			VertexBuffer buffer) {
 		return CompletableFuture.runAsync(() -> {
 
-			if (!buffer.invalid()) {
+			if (!buffer.isInvalid()) {
 				buffer.bind();
 				renderedBuffer.upload(buffer);
 				VertexBuffer.unbind();
@@ -326,25 +324,25 @@ public class SpecialChunkBuilder {
 		private RebuildTask rebuildTask;
 		public final Map<SpecialModelRenderer, SortTask> sortTasks = new Reference2ObjectArrayMap<>();
 
-		private Box boundingBox;
+		private AABB boundingBox;
 
 		private boolean needsRebuild = true;
 		private boolean needsImportantRebuild;
 
-		private final BlockPos.Mutable origin = new BlockPos.Mutable(-1, -1, -1);
+		private final BlockPos.MutableBlockPos origin = new BlockPos.MutableBlockPos(-1, -1, -1);
 
-		private final BlockPos.Mutable[] neighbours = Util.make(new BlockPos.Mutable[6], pos -> {
+		private final BlockPos.MutableBlockPos[] neighbours = Util.make(new BlockPos.MutableBlockPos[6], pos -> {
 
 			for (int i = 0; i < pos.length; ++i) {
-				pos[i] = new BlockPos.Mutable();
+				pos[i] = new BlockPos.MutableBlockPos();
 			}
 
 		});
 
 		private final Map<SpecialModelRenderer, VertexBuffer> specialModelBuffers = SpecialModelRenderer.SPECIAL_MODEL_RENDERER
-			.getEntries()
+			.entrySet()
 			.stream()
-			.collect(Collectors.toMap(entry -> entry.getValue(), entry -> new VertexBuffer(VertexBuffer.Usage.STATIC)));
+			.collect(Collectors.toMap(Map.Entry::getValue, entry -> new VertexBuffer(VertexBuffer.Usage.STATIC)));
 
 		public VertexBuffer getBuffer(SpecialModelRenderer modelRenderer) {
 			return specialModelBuffers.get(modelRenderer);
@@ -361,7 +359,7 @@ public class SpecialChunkBuilder {
 
 		private boolean isChunkNonEmpty(BlockPos pos) {
 			return SpecialChunkBuilder.this.world
-				.getChunk(ChunkSectionPos.getSectionCoord(pos.getX()), ChunkSectionPos.getSectionCoord(pos.getZ()),
+				.getChunk(SectionPos.posToSectionCoord(pos.getX()), SectionPos.posToSectionCoord(pos.getZ()),
 					ChunkStatus.FULL, false) != null;
 		}
 
@@ -378,14 +376,14 @@ public class SpecialChunkBuilder {
 
 		}
 
-		public Box getBoundingBox() {
+		public AABB getBoundingBox() {
 			return this.boundingBox;
 		}
 
 		public void setOrigin(int x, int y, int z) {
 			this.clear();
 			this.origin.set(x, y, z);
-			this.boundingBox = new Box(x, y, z, x + 16, y + 16, z + 16);
+			this.boundingBox = new AABB(x, y, z, x + 16, y + 16, z + 16);
 
 			for (Direction direction : Direction.values()) {
 				this.neighbours[direction.ordinal()].set(this.origin).move(direction, 16);
@@ -394,15 +392,15 @@ public class SpecialChunkBuilder {
 		}
 
 		protected double getSquaredCameraDistance() {
-			Camera camera = client.gameRenderer.getCamera();
-			double x = this.boundingBox.minX + 8.0 - camera.getPos().x;
-			double y = this.boundingBox.minY + 8.0 - camera.getPos().y;
-			double z = this.boundingBox.minZ + 8.0 - camera.getPos().z;
+			Camera camera = client.gameRenderer.getMainCamera();
+			double x = this.boundingBox.minX + 8.0 - camera.getPosition().x;
+			double y = this.boundingBox.minY + 8.0 - camera.getPosition().y;
+			double z = this.boundingBox.minZ + 8.0 - camera.getPosition().z;
 			return x * x + y * y + z * z;
 		}
 
 		void beginBufferBuilding(SpecialBufferBuilder buffer) {
-			buffer.begin(DrawMode.QUADS, SpecialVertexFormats.POSITION_COLOR_TEXTURE_LIGHT_NORMAL_STATE);
+			buffer.begin(Mode.QUADS, SpecialVertexFormats.POSITION_COLOR_TEXTURE_LIGHT_NORMAL_STATE);
 		}
 
 		public ChunkData getData() {
@@ -480,12 +478,12 @@ public class SpecialChunkBuilder {
 			return cancelled;
 		}
 
-		public Task createRebuildTask(ChunkRenderRegionCache cache) {
+		public Task createRebuildTask(RenderRegionCache cache) {
 			boolean cancelled = this.cancel();
 
-			BlockPos pos = this.origin.toImmutable();
-			ChunkRenderRegion region = cache
-				.createRenderRegion(SpecialChunkBuilder.this.world, pos.add(-1, -1, -1), pos.add(16, 16, 16), 1);
+			BlockPos pos = this.origin.immutable();
+			RenderChunkRegion region = cache
+				.createRegion(SpecialChunkBuilder.this.world, pos.offset(-1, -1, -1), pos.offset(16, 16, 16), 1);
 
 			boolean empty = this.data.get() == SpecialChunkBuilder.ChunkData.EMPTY;
 
@@ -498,20 +496,20 @@ public class SpecialChunkBuilder {
 			return this.rebuildTask;
 		}
 
-		public void scheduleRebuild(SpecialChunkBuilder builder, ChunkRenderRegionCache cache) {
+		public void scheduleRebuild(SpecialChunkBuilder builder, RenderRegionCache cache) {
 			builder.send(this.createRebuildTask(cache));
 		}
 
-		public void rebuild(ChunkRenderRegionCache cache) {
+		public void rebuild(RenderRegionCache cache) {
 			this.createRebuildTask(cache).run(SpecialChunkBuilder.this.buffers);
 		}
 
 		public class RebuildTask extends Task {
 
 			@Nullable
-			protected ChunkRenderRegion region;
+			protected RenderChunkRegion region;
 
-			public RebuildTask(double distance, @Nullable ChunkRenderRegion region, boolean highPriority) {
+			public RebuildTask(double distance, @Nullable RenderChunkRegion region, boolean highPriority) {
 				super(distance, highPriority);
 				this.region = region;
 			}
@@ -534,7 +532,7 @@ public class SpecialChunkBuilder {
 				} else if (this.cancelled.get()) {
 					return CompletableFuture.completedFuture(Result.CANCELLED);
 				} else {
-					Vec3d cameraPos = SpecialChunkBuilder.this.getCameraPosition();
+					Vec3 cameraPos = SpecialChunkBuilder.this.getCameraPosition();
 					float x = (float) cameraPos.x;
 					float y = (float) cameraPos.y;
 					float z = (float) cameraPos.z;
@@ -566,12 +564,12 @@ public class SpecialChunkBuilder {
 							}
 
 						});
-						return Util.combine(results).handle((listx, throwable) -> {
+						return Util.sequenceFailFast(results).handle((listx, throwable) -> {
 
 							if (throwable != null && !(throwable instanceof CancellationException) && !(throwable instanceof InterruptedException)) {
-								MinecraftClient
+								Minecraft
 									.getInstance()
-									.setCrashReport(CrashReport.create(throwable, "Rendering chunk"));
+									.delayCrash(CrashReport.forThrowable(throwable, "Rendering chunk"));
 							}
 
 							if (this.cancelled.get()) {
@@ -597,40 +595,40 @@ public class SpecialChunkBuilder {
 					SpecialBufferBuilderStorage buffers) {
 				RenderedChunkData renderedChunkData = new RenderedChunkData();
 
-				BlockPos originPos = BuiltChunk.this.origin.toImmutable();
-				BlockPos boundingPos = originPos.add(15, 15, 15);
+				BlockPos originPos = BuiltChunk.this.origin.immutable();
+				BlockPos boundingPos = originPos.offset(15, 15, 15);
 
-				ChunkOcclusionDataBuilder chunkOcclusionDataBuilder = new ChunkOcclusionDataBuilder();
-				ChunkRenderRegion chunkRenderRegion = this.region;
+				VisGraph chunkOcclusionDataBuilder = new VisGraph();
+				RenderChunkRegion chunkRenderRegion = this.region;
 				this.region = null;
 
-				MatrixStack matrixStack = new MatrixStack();
+				PoseStack matrixStack = new PoseStack();
 
 				if (chunkRenderRegion != null) {
-					BlockModelRenderer.enableBrightnessCache();
-					RandomGenerator randomGenrator = RandomGenerator.createLegacy();
-					BlockRenderManager blockRenderManager = MinecraftClient.getInstance().getBlockRenderManager();
+					ModelBlockRenderer.enableCaching();
+					RandomSource randomGenrator = RandomSource.create();
+					BlockRenderDispatcher blockRenderManager = Minecraft.getInstance().getBlockRenderer();
 
-					for (BlockPos pos : BlockPos.iterate(originPos, boundingPos)) {
+					for (BlockPos pos : BlockPos.betweenClosed(originPos, boundingPos)) {
 						BlockState state = chunkRenderRegion.getBlockState(pos);
 
-						if (state.isOpaqueFullCube(chunkRenderRegion, pos)) {
-							chunkOcclusionDataBuilder.markClosed(pos);
+						if (state.isSolidRender(chunkRenderRegion, pos)) {
+							chunkOcclusionDataBuilder.setOpaque(pos);
 						}
 
-						if (state.getRenderType() != BlockRenderType.INVISIBLE) {
-							matrixStack.push();
+						if (state.getRenderShape() != RenderShape.INVISIBLE) {
+							matrixStack.pushPose();
 							matrixStack
 								.translate((float) (pos.getX() & 15), (float) (pos.getY() & 15), (float) (pos.getZ() & 15));
 							List<Pair<SpecialModelRenderer, BakedModel>> models = ((BakedModelAccess) WrapperBakedModel
-								.unwrap(blockRenderManager.getModel(state))).getModels(state);
+								.unwrap(blockRenderManager.getBlockModel(state))).getModels(state);
 
 							if (!models.isEmpty()) {
 
 								for (Pair<SpecialModelRenderer, BakedModel> pair : models) {
 									SpecialModelRenderer modelRenderer = pair.getFirst();
 									BakedModel model = pair.getSecond();
-									long modelSeed = state.getRenderingSeed(pos);
+									long modelSeed = state.getSeed(pos);
 									SpecialBufferBuilder buffer = buffers.get(modelRenderer);
 									buffer
 										.setState(() -> modelRenderer
@@ -638,7 +636,7 @@ public class SpecialChunkBuilder {
 
 									if (!buffer.isBuilding()) {
 										buffer
-											.begin(VertexFormat.DrawMode.QUADS,
+											.begin(VertexFormat.Mode.QUADS,
 												SpecialVertexFormats.POSITION_COLOR_TEXTURE_LIGHT_NORMAL_STATE);
 									}
 
@@ -651,13 +649,13 @@ public class SpecialChunkBuilder {
 											.toList());
 									blockRenderManager
 										.getModelRenderer()
-										.render(chunkRenderRegion, constructedModel, state, pos, matrixStack, buffer, true,
-											randomGenrator, modelSeed, OverlayTexture.DEFAULT_UV);
+										.tesselateBlock(chunkRenderRegion, constructedModel, state, pos, matrixStack, buffer, true,
+											randomGenrator, modelSeed, OverlayTexture.NO_OVERLAY);
 								}
 
 							}
 
-							matrixStack.pop();
+							matrixStack.popPose();
 						}
 
 					}
@@ -668,14 +666,14 @@ public class SpecialChunkBuilder {
 						if (!bufferBuilder.isCurrentBatchEmpty()) {
 							bufferBuilder
 								.setQuadSorting(VertexSorting
-									.byDistanceSquared(cameraX - originPos.getX(), cameraY - originPos.getY(),
+									.byDistance(cameraX - originPos.getX(), cameraY - originPos.getY(),
 										cameraZ - originPos.getZ()));
 							renderedChunkData.bufferStates.put(modelRenderer, bufferBuilder.popState());
 						}
 
 						if (!bufferBuilder.isBuilding()) {
 							bufferBuilder
-								.begin(VertexFormat.DrawMode.QUADS,
+								.begin(VertexFormat.Mode.QUADS,
 									SpecialVertexFormats.POSITION_COLOR_TEXTURE_LIGHT_NORMAL_STATE);
 						}
 
@@ -687,21 +685,21 @@ public class SpecialChunkBuilder {
 
 					}
 
-					BlockModelRenderer.disableBrightnessCache();
+					ModelBlockRenderer.clearCache();
 				}
 
-				renderedChunkData.occlusionGraph = chunkOcclusionDataBuilder.build();
+				renderedChunkData.occlusionGraph = chunkOcclusionDataBuilder.resolve();
 				return renderedChunkData;
 			}
 
-			private BakedQuad reconstructBakedQuad(ChunkRenderRegion region, BlockPos pos, BlockState state,
+			private BakedQuad reconstructBakedQuad(RenderChunkRegion region, BlockPos pos, BlockState state,
 					BakedModel model, long modelSeed, BakedQuad quad, SpecialModelRenderer modelRenderer) {
-				int[] vertexData = quad.getVertexData();
+				int[] vertexData = quad.getVertices();
 				int vertexDataLength = 8;
 
 				try (MemoryStack memoryStack = MemoryStack.stackPush()) {
 					ByteBuffer byteBuffer = memoryStack
-						.malloc(VertexFormats.POSITION_COLOR_TEXTURE_LIGHT_NORMAL.getVertexSize());
+						.malloc(DefaultVertexFormat.BLOCK.getVertexSize());
 					IntBuffer intBuffer = byteBuffer.asIntBuffer();
 					int[] reconstructed = new int[vertexData.length];
 					int uvIndex = 0;
@@ -780,8 +778,8 @@ public class SpecialChunkBuilder {
 					byteBuffer.putFloat(20, mutableQuad.getV4().getUv().y);
 					intBuffer.position(0);
 					intBuffer.get(reconstructed, uvIndex, vertexDataLength);
-					return new BakedQuad(reconstructed, quad.getColorIndex(), quad.getFace(), quad.getSprite(),
-						quad.hasShade());
+					return new BakedQuad(reconstructed, quad.getTintIndex(), quad.getDirection(), quad.getSprite(),
+						quad.isShade());
 				}
 
 			}
@@ -800,25 +798,25 @@ public class SpecialChunkBuilder {
 
 				public final Map<SpecialModelRenderer, RenderedBuffer> renderedBuffers = new Reference2ObjectArrayMap<>();
 				public final Map<SpecialModelRenderer, SortState> bufferStates = new Reference2ObjectArrayMap<>();
-				public ChunkOcclusionData occlusionGraph = new ChunkOcclusionData();
+				public VisibilitySet occlusionGraph = new VisibilitySet();
 
 			}
 
 			public static final class ReconstructableModel extends ForwardingBakedModel {
 
-				private QuadFunction<List<BakedQuad>, BlockState, Direction, RandomGenerator, List<BakedQuad>> function;
+				private QuadFunction<List<BakedQuad>, BlockState, Direction, RandomSource, List<BakedQuad>> function;
 
 				public ReconstructableModel(BakedModel model) {
 					this.wrapped = model;
 				}
 
 				public void setFunction(
-						QuadFunction<List<BakedQuad>, BlockState, Direction, RandomGenerator, List<BakedQuad>> function) {
+						QuadFunction<List<BakedQuad>, BlockState, Direction, RandomSource, List<BakedQuad>> function) {
 					this.function = function;
 				}
 
 				@Override
-				public List<BakedQuad> getQuads(BlockState blockState, Direction face, RandomGenerator rand) {
+				public List<BakedQuad> getQuads(BlockState blockState, Direction face, RandomSource rand) {
 					return function.apply(super.getQuads(blockState, face, rand), blockState, face, rand);
 				}
 
@@ -853,7 +851,7 @@ public class SpecialChunkBuilder {
 				} else if (this.cancelled.get()) {
 					return CompletableFuture.completedFuture(Result.CANCELLED);
 				} else {
-					Vec3d cameraPos = SpecialChunkBuilder.this.getCameraPosition();
+					Vec3 cameraPos = SpecialChunkBuilder.this.getCameraPosition();
 					float x = (float) cameraPos.x;
 					float y = (float) cameraPos.y;
 					float z = (float) cameraPos.z;
@@ -867,7 +865,7 @@ public class SpecialChunkBuilder {
 
 						bufferBuilder
 							.setQuadSorting(VertexSorting
-								.byDistanceSquared(x - (float) BuiltChunk.this.origin.getX(),
+								.byDistance(x - (float) BuiltChunk.this.origin.getX(),
 									y - (float) BuiltChunk.this.origin.getY(), z - (float) BuiltChunk.this.origin.getZ()));
 
 						this.data.bufferStates.put(renderer, bufferBuilder.popState());
@@ -884,9 +882,9 @@ public class SpecialChunkBuilder {
 							return completableFuture.handle((result, throwable) -> {
 
 								if (throwable != null && !(throwable instanceof CancellationException) && !(throwable instanceof InterruptedException)) {
-									MinecraftClient
+									Minecraft
 										.getInstance()
-										.setCrashReport(CrashReport.create(throwable, "Rendering chunk"));
+										.delayCrash(CrashReport.forThrowable(throwable, "Rendering chunk"));
 								}
 
 								return this.cancelled.get() ? Result.CANCELLED : Result.SUCCESSFUL;
@@ -947,7 +945,7 @@ public class SpecialChunkBuilder {
 		public final Map<SpecialModelRenderer, RenderedBuffer> renderedBuffers = new Reference2ObjectArrayMap<>();
 		public final Map<SpecialModelRenderer, SortState> bufferStates = new Reference2ObjectArrayMap<>();
 
-		public ChunkOcclusionData occlusionGraph = new ChunkOcclusionData();
+		public VisibilitySet occlusionGraph = new VisibilitySet();
 
 		public boolean isEmpty() {
 			return this.renderedBuffers.isEmpty();
@@ -960,7 +958,7 @@ public class SpecialChunkBuilder {
 		}
 
 		public boolean isVisibleThrough(Direction from, Direction to) {
-			return this.occlusionGraph.isVisibleThrough(from, to);
+			return this.occlusionGraph.visibilityBetween(from, to);
 		}
 
 	}
