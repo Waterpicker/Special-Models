@@ -134,9 +134,9 @@ public abstract class WorldRendererMixin implements WorldRendererAccess, WorldCh
 
 				if (shader.CHUNK_OFFSET != null) {
 					BlockPos blockPos = origin;
-					float vx = (float) (blockPos.getX() - camera.getBlockPosition().getX());
-					float vy = (float) (blockPos.getY() - camera.getBlockPosition().getY());
-					float vz = (float) (blockPos.getZ() - camera.getBlockPosition().getZ());
+					float vx = (float) (blockPos.getX() - camera.getPosition().x());
+					float vy = (float) (blockPos.getY() - camera.getPosition().y());
+					float vz = (float) (blockPos.getZ() - camera.getPosition().z());
 					shader.CHUNK_OFFSET.set(vx, vy, vz);
 				}
 
