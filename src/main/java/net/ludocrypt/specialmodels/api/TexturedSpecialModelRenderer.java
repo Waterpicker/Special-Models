@@ -14,7 +14,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 public class TexturedSpecialModelRenderer extends SpecialModelRenderer {
 
 	public static final SpecialModelRenderer TEXTURED = Registry
-		.register(SpecialModelRenderer.SPECIAL_MODEL_RENDERER, new ResourceLocation("specialmodels", "textured"),
+		.register(SpecialModelRenderer.SPECIAL_MODEL_RENDERER, ResourceLocation.fromNamespaceAndPath("specialmodels", "textured"),
 			new TexturedSpecialModelRenderer());
 
 	public TexturedSpecialModelRenderer() {

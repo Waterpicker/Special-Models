@@ -28,10 +28,10 @@ import net.ludocrypt.specialmodels.impl.render.Vec4b;
 public abstract class SpecialModelRenderer {
 
 	public static final ResourceKey<Registry<SpecialModelRenderer>> SPECIAL_MODEL_RENDERER_KEY = ResourceKey
-		.createRegistryKey(new ResourceLocation("limlib/special_model_renderer"));
+		.createRegistryKey(ResourceLocation.parse("limlib/special_model_renderer"));
 
 	public static final MappedRegistry<SpecialModelRenderer> SPECIAL_MODEL_RENDERER = FabricRegistryBuilder
-		.createDefaulted(SPECIAL_MODEL_RENDERER_KEY, new ResourceLocation("specialmodels", "textured"))
+		.createDefaulted(SPECIAL_MODEL_RENDERER_KEY, ResourceLocation.fromNamespaceAndPath("specialmodels", "textured"))
 		.attribute(RegistryAttribute.SYNCED)
 		.buildAndRegister();
 
